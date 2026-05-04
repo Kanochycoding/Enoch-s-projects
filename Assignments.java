@@ -1,18 +1,98 @@
-import java.util.Scanner;
+import numpy as np
+import cvxpy as cp
+import matplotlib.pyplot as plt
 
-public class Assignments {
-    public  static void main( String[] args){
+# -------------------------------
+# PARAMETERS
+# -------------------------------
+arrival_rate = 2.0      # average arrivals per step
+mu_nominal = 2.0        # baseline service rate
+Q_target = 5            # desired queue level
+steps = 100             # simulation length
+
+# -------------------------------
+# MPC CONTROLLER
+# -------------------------------
+def mpc_controller(Q_current, mu_prev):
+
+    horizon = 10
+    dt = 1.0
+
+    mu = cp.Variable(horizon)
+    Q = cp.Variable(horizon + 1)
+
+    cost = 0
+    constraints = []
+
+    constraints += [Q[0] == Q_current]
+
+    for k in range(horizon):
+
+        # System model
+        constraints += [
+            Q[k+1] == Q[k] + (arrival_rate - mu[k]) * dt
+        ]
+
+        # Limits on service rate
+        constraints += [
+            mu[k] >= 0.1,
+            mu[k] <= 5
+        ]
+
+        # Cost function
+        cost += (Q[k] - Q_target)**2
+        cost += 0.1 * (mu[k] - mu_prev)**2
+
+    problem = cp.Problem(cp.Minimize(cost), constraints)
+    problem.solve()
+
+    return mu.value[0]
 
 
-        Scanner sca=new Scanner(System.in);
-        double x;
-        System.out.print("what is your radius ");
-        x=sca.nextDouble();
-        double c=3.15 * (x*x);
-        System.out.println("Your area is "+(int)c);
-        sca.close();
+# -------------------------------
+# SIMULATION LOOP
+# -------------------------------
+Q = 5   # initial queue
+mu = mu_nominal
+
+Q_history = []
+mu_history = []
+
+for t in range(steps):
+
+    # --- MPC decides service rate ---
+    mu = mpc_controller(Q, mu)
+
+    # --- Random arrivals (Poisson) ---
+    arrivals = np.random.poisson(arrival_rate)
+
+    # --- Service (cannot exceed queue) ---
+    served = min(Q, np.random.poisson(mu))
+
+    # --- Update queue ---
+    Q = max(0, Q + arrivals - served)
+
+    # Store data
+    Q_history.append(Q)
+    mu_history.append(mu)
 
 
-    }
-    
-}
+# -------------------------------
+# PLOTTING
+# -------------------------------
+plt.figure(figsize=(8,6))
+
+plt.subplot(2,1,1)
+plt.plot(Q_history)
+plt.axhline(Q_target, linestyle='--')
+plt.title("Queue Length (MPC Controlled)")
+plt.ylabel("Queue")
+
+plt.subplot(2,1,2)
+plt.plot(mu_history)
+plt.title("Service Rate (Control Input)")
+plt.ylabel("mu")
+plt.xlabel("Time Step")
+
+plt.tight_layout()
+plt.show()
